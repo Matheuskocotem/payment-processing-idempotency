@@ -1,66 +1,155 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Payment Processing Idempotency
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Sistema de processamento de pagamentos construído em Laravel com foco em um único objetivo: garantir **exactly once financeiro**. Nenhuma cobrança duplicada, mesmo diante de retries do cliente, timeouts de rede ou webhooks duplicados do provedor.
 
-## About Laravel
+## Visão geral
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+O núcleo do sistema é a combinação de duas técnicas complementares:
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+1. Uma **máquina de estados** rígida para o ciclo de vida do pagamento, onde transições inválidas são impossíveis de representar.
+2. Uma camada de **idempotência dupla**: entre o cliente e a API, e entre a API e o provedor de pagamento (PSP).
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Tudo isso organizado em **arquitetura hexagonal** (ports and adapters), para que o núcleo de negócio nunca dependa do framework, do banco de dados ou de HTTP.
 
-## Learning Laravel
+## Arquitetura
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+O código de domínio vive em `App\Payment`, dividido em três camadas com uma regra de dependência em uma única direção:
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+```
+Infrastructure  →  Application  →  Domain
+```
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains over 2000 video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+### 1. Domain
 
-## Laravel Sponsors
+Núcleo puro em PHP. Não conhece Eloquent, HTTP, filas ou qualquer classe do Laravel. Contém:
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the Laravel [Patreon page](https://patreon.com/taylorotwell).
+1. `Money`, o value object que representa valores monetários sempre em centavos inteiros.
+2. `PaymentStatus`, o enum que modela a máquina de estados e valida transições.
+3. `Payment`, a entidade rica cujas transições de estado emitem eventos de domínio.
+4. Exceções de domínio e os ports (interfaces) que a camada de fora precisa implementar.
 
-### Premium Partners
+### 2. Application
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Cubet Techno Labs](https://cubettech.com)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[Many](https://www.many.co.uk)**
-- **[Webdock, Fast VPS Hosting](https://www.webdock.io/en)**
-- **[DevSquad](https://devsquad.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[OP.GG](https://op.gg)**
-- **[WebReinvent](https://webreinvent.com/?utm_source=laravel&utm_medium=github&utm_campaign=patreon-sponsors)**
-- **[Lendio](https://lendio.com)**
+Orquestra o domínio através dos ports. Recebe DTOs e devolve DTOs ou entidades, nunca um `Request` do Laravel ou um model do Eloquent.
 
-## Contributing
+### 3. Infrastructure
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Os adapters: models e repositórios Eloquent, o provedor de pagamento (real ou fake), middleware HTTP, controllers e o service provider que liga tudo via injeção de dependência.
 
-## Code of Conduct
+## Máquina de estados do pagamento
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING
+    PENDING --> AUTHORIZED
+    PENDING --> FAILED
+    PENDING --> CANCELED
+    AUTHORIZED --> CAPTURED
+    AUTHORIZED --> FAILED
+    AUTHORIZED --> REFUNDED
+    CAPTURED --> SETTLED
+    CAPTURED --> REFUNDED
+    SETTLED --> REFUNDED
+    FAILED --> [*]
+    CANCELED --> [*]
+    REFUNDED --> [*]
+```
 
-## Security Vulnerabilities
+Toda transição passa por validação explícita. Uma tentativa fora do mapa acima lança `InvalidTransitionException` e o estado permanece inalterado.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Idempotência dupla
 
-## License
+### Cliente para API
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+O cliente envia um header `Idempotency-Key`. A API calcula o fingerprint SHA-256 do corpo canonicalizado da requisição e tenta um `INSERT` protegido por constraint `UNIQUE` no MySQL, nunca um check seguido de insert. Isso torna o travamento atômico mesmo sob concorrência real.
+
+Comportamento por cenário:
+
+1. Chave nova: a requisição segue normalmente.
+2. Chave já em processamento (`LOCKED`): resposta `409`.
+3. Chave usada com corpo diferente: resposta `422`.
+4. Chave já resolvida (`COMPLETED` ou `FAILED`): a resposta original é reproduzida, sem reprocessar nada.
+
+### API para o provedor (PSP)
+
+Ao chamar o gateway de pagamento, a API gera sua própria chave de idempotência e a envia ao provedor. Um timeout ou uma resposta perdida nunca são interpretados como sucesso ou falha: o pagamento permanece `PENDING` até que a reconciliação confirme o estado real junto ao PSP.
+
+## Stack
+
+1. PHP 8.2, com tipagem estrita em todo o código de domínio.
+2. Laravel 10.
+3. MySQL, com a constraint `UNIQUE` como mecanismo de trava.
+4. Docker Compose: nginx, php fpm, MySQL e Redis.
+5. PHPUnit para os testes.
+
+## Como executar
+
+O ambiente inteiro roda em containers, sem exigir PHP instalado localmente.
+
+```bash
+# sobe o stack (nginx, php fpm, mysql, redis)
+docker compose up -d app
+
+# instala as dependências
+docker compose run --rm composer install
+
+# gera a chave da aplicação, se ainda não existir
+docker compose run --rm artisan key:generate
+
+# roda as migrations
+docker compose run --rm artisan migrate
+```
+
+A API fica disponível em `http://localhost:8000`.
+
+## Endpoint
+
+### Criar um pagamento
+
+```bash
+curl http://localhost:8000/api/payments \
+  --request POST \
+  --header "Content-Type: application/json" \
+  --header "Idempotency-Key: minhaChaveUnicaDaTentativa" \
+  --data '{
+    "customer_id": "cus_123",
+    "amount_cents": 1500,
+    "currency": "BRL"
+  }'
+```
+
+Resposta em caso de sucesso:
+
+```json
+{
+  "id": "8f2c...",
+  "customer_id": "cus_123",
+  "amount_cents": 1500,
+  "currency": "BRL",
+  "status": "CAPTURED",
+  "provider_ref": "fake_psp_...",
+  "created_at": "2026-08-14T02:15:08-03:00",
+  "updated_at": "2026-08-14T02:15:09-03:00"
+}
+```
+
+Reenviar a mesma requisição com o mesmo header `Idempotency-Key` devolve exatamente essa mesma resposta, marcada com o header `Idempotent-Replay: true`, sem criar um segundo pagamento.
+
+## Testes
+
+```bash
+docker compose run --rm php vendor/bin/phpunit
+```
+
+A suíte cobre, entre outras coisas:
+
+1. Todas as transições válidas e inválidas da máquina de estados.
+2. O cálculo do fingerprint de idempotência, incluindo canonicalização de corpos com chaves em ordens diferentes.
+3. O provedor de pagamento fake, com injeção controlada de timeout, resposta perdida, recusa e cobrança duplicada.
+4. Uma prova de concorrência real: quinze requisições HTTP disparadas em paralelo contra o stack completo, com a mesma `Idempotency-Key`, resultando em exatamente um pagamento criado no banco.
+
+## Limitações conhecidas
+
+1. Um lock `LOCKED` cujo processo dono falhou antes de concluir permanece preso, sem TTL de recuperação nesta fase.
+2. O provedor de pagamento é um fake controlável, não uma integração real. A troca por um provedor de verdade acontece apenas na camada de Infrastructure, sem tocar em Domain ou Application.
+3. Saga orquestrada, processamento de webhooks e reconciliação periódica fazem parte da arquitetura planejada, mas ainda não foram implementados.
