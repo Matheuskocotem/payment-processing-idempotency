@@ -1,0 +1,103 @@
+version: '3.8'
+
+networks:
+  laravel-backend:
+
+volumes:
+  mysql_data:
+
+services:
+  # Serviço Nginx
+  app:
+    build:
+      context: .
+      dockerfile: dockerfiles/nginx.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    ports:
+      - "8000:80"
+    volumes:
+      - .:/var/www/html:delegated
+    depends_on:
+      - php
+      - redis
+      - mysql
+    networks:
+      - laravel-backend
+
+  # Serviço MySQL
+  mysql:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: paymant_processing_indempotency
+      MYSQL_PASSWORD: root
+      MYSQL_USER: laravel
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - laravel-backend
+
+  # Serviço PHP-FPM
+  php:
+    build:
+      context: .
+      dockerfile: dockerfiles/php.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    volumes:
+      - .:/var/www/html:delegated
+    networks:
+      - laravel-backend
+
+  # Redis para cache e filas
+  redis:
+    image: redis:alpine
+    networks:
+      - laravel-backend
+
+  # Composer
+  composer:
+    build:
+      context: .
+      dockerfile: dockerfiles/php.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    volumes:
+      - .:/var/www/html
+    depends_on:
+      - php
+    entrypoint: ['composer', '--ignore-platform-req=ext-sockets', '--ignore-platform-req=ext-zip']
+    networks:
+      - laravel-backend
+
+  # Artisan (ferramenta de linha de comando)
+  artisan:
+    build:
+      context: .
+      dockerfile: dockerfiles/php.dockerfile
+      args:
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    volumes:
+      - .:/var/www/html:delegated
+    depends_on:
+      - mysql
+    entrypoint: ['php', 'artisan']
+    networks:
+      - laravel-backend
+
+  # MailHog para teste de e-mails
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - laravel-backend
