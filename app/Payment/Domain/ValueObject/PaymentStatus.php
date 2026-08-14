@@ -37,6 +37,7 @@ enum PaymentStatus: string
                 return true;
             }
         }
+
         return false;
     }
 

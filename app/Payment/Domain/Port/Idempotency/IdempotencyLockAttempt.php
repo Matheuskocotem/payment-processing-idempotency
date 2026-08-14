@@ -15,8 +15,7 @@ final class IdempotencyLockAttempt
     private function __construct(
         public readonly bool $acquired,
         public readonly ?IdempotencyRecord $existing,
-    ) {
-    }
+    ) {}
 
     public static function acquired(): self
     {

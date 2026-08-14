@@ -16,8 +16,7 @@ final class IdempotencyRecord
         public readonly IdempotencyRecordStatus $status,
         public readonly ?int $responseCode,
         public readonly ?string $responseBody,
-    ) {
-    }
+    ) {}
 
     public function hasFingerprint(string $fingerprint): bool
     {

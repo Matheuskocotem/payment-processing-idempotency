@@ -15,7 +15,7 @@ final class Payment
     private array $recordedEvents = [];
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      */
     public function __construct(
         public readonly string $id,
@@ -25,8 +25,7 @@ final class Payment
         private ?string $providerRef,
         public readonly DateTimeImmutable $createdAt,
         private DateTimeImmutable $updatedAt,
-    ) {
-    }
+    ) {}
 
     public static function initiate(
         string $id,
@@ -68,7 +67,7 @@ final class Payment
     }
 
     /**
-     * @param array<string, mixed> $eventPayload
+     * @param  array<string, mixed>  $eventPayload
      */
     public function transitionTo(
         PaymentStatus $target,
@@ -87,11 +86,11 @@ final class Payment
             $this->providerRef = $providerRef;
         }
 
-        $this->record('payment.' . strtolower($target->value), $eventPayload, $now);
+        $this->record('payment.'.strtolower($target->value), $eventPayload, $now);
     }
 
     /**
-     * @param array<string, mixed> $payload
+     * @param  array<string, mixed>  $payload
      */
     private function record(string $type, array $payload, DateTimeImmutable $at): void
     {
@@ -109,6 +108,7 @@ final class Payment
     {
         $events = $this->recordedEvents;
         $this->recordedEvents = [];
+
         return $events;
     }
 }

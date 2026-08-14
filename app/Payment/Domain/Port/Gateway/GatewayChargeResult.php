@@ -16,8 +16,7 @@ final class GatewayChargeResult
         public readonly GatewayChargeOutcome $outcome,
         public readonly ?string $providerRef,
         public readonly ?string $declineReason,
-    ) {
-    }
+    ) {}
 
     public static function succeeded(string $providerRef): self
     {

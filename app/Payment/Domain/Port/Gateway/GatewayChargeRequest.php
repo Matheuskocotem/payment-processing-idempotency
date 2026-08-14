@@ -18,6 +18,5 @@ final class GatewayChargeRequest
         public readonly string $paymentId,
         public readonly string $customerId,
         public readonly Money $money,
-    ) {
-    }
+    ) {}
 }

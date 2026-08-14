@@ -17,7 +17,7 @@ use App\Payment\Domain\Port\Gateway\GatewayChargeResult;
 interface PaymentGateway
 {
     /**
-     * @throws GatewayTimeoutException     when the PSP didn't respond in time
+     * @throws GatewayTimeoutException when the PSP didn't respond in time
      * @throws GatewayResponseLostException when the response was lost after being sent
      */
     public function charge(GatewayChargeRequest $request): GatewayChargeResult;
